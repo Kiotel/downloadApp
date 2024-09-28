@@ -186,8 +186,12 @@ class MainActivity : AppCompatActivity() {
 				urlString.substring(urlString.lastIndexOf('/') + 1)
 			}
 
-			outputFilePath =
-				"${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
+			// Определение директории для загрузки и получение уникального имени файла
+			val downloadsDirectory =
+				Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+			val uniqueFileName = getUniqueFileName(fileName, downloadsDirectory)
+
+			outputFilePath = "${downloadsDirectory}/$uniqueFileName"
 			val input = BufferedInputStream(connection.inputStream, 16 * 1024) // 16KB buffer
 			val output = withContext(Dispatchers.IO) {
 				FileOutputStream(outputFilePath)
@@ -231,13 +235,14 @@ class MainActivity : AppCompatActivity() {
 				input.close()
 			}
 
-			true // Success
+			true // Успешная загрузка
 		} catch (e: Exception) {
 			e.printStackTrace()
 			deleteDownloadedFile(outputFilePath)
-			false // Error
+			false // Ошибка при загрузке
 		}
 	}
+
 
 	private fun deleteDownloadedFile(filePath: String?) {
 		if (!filePath.isNullOrEmpty()) {
@@ -256,6 +261,24 @@ class MainActivity : AppCompatActivity() {
 		return String.format("%02d:%02d:%02d", hours, minutes, secs)
 	}
 
+	private fun getUniqueFileName(fileName: String, directory: File): String {
+		var uniqueFileName = fileName
+		var file = File(directory, uniqueFileName)
+
+		var index = 1
+		val extensionIndex = fileName.lastIndexOf('.')
+		val baseName = if (extensionIndex > 0) fileName.substring(0, extensionIndex) else fileName
+		val extension = if (extensionIndex > 0) fileName.substring(extensionIndex) else ""
+
+		while (file.exists()) {
+			uniqueFileName = "$baseName($index)$extension"
+			file = File(directory, uniqueFileName)
+			index++
+		}
+
+		return uniqueFileName
+	}
+
 	private fun getFileName(urlString: String): String? {
 		return try {
 			val url = URL(urlString)
@@ -266,16 +289,23 @@ class MainActivity : AppCompatActivity() {
 				null
 			} else {
 				val contentDisposition = connection.getHeaderField("Content-Disposition")
-				if (contentDisposition != null && contentDisposition.contains("filename=")) {
-					contentDisposition.substringAfter("filename=").replace("\"", "")
-				} else {
-					urlString.substring(urlString.lastIndexOf('/') + 1)
-				}
+				val originalFileName =
+					if (contentDisposition != null && contentDisposition.contains("filename=")) {
+						contentDisposition.substringAfter("filename=").replace("\"", "")
+					} else {
+						urlString.substring(urlString.lastIndexOf('/') + 1)
+					}
+
+				// Теперь мы добавляем проверку на существование файла и создаем уникальное имя
+				val downloadsDirectory =
+					Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+				getUniqueFileName(originalFileName, downloadsDirectory)
 			}
 		} catch (e: Exception) {
 			e.printStackTrace()
 			null
 		}
 	}
+
 
 }
