@@ -93,6 +93,11 @@ class MainActivity : AppCompatActivity() {
 
 	@SuppressLint("SetTextI18n")
 	private fun startCustomDownload(url: String) {
+		if (downloadJob?.isActive == true) {
+			Toast.makeText(this, "Скачивание уже идет, дождитесь завершения", Toast.LENGTH_SHORT).show()
+			return
+		}
+
 		val cancelIntent = Intent(this, CancelDownloadReceiver::class.java)
 		val cancelPendingIntent: PendingIntent = PendingIntent.getBroadcast(
 			this, 0, cancelIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
@@ -101,7 +106,6 @@ class MainActivity : AppCompatActivity() {
 		downloadJob = CoroutineScope(Dispatchers.IO).launch {
 			val startTime = System.currentTimeMillis()
 
-			// Download the file and get its name
 			val fileName = getFileName(url)
 			if (fileName == null) {
 				withContext(Dispatchers.Main) {
@@ -113,7 +117,7 @@ class MainActivity : AppCompatActivity() {
 
 			val builder = NotificationCompat.Builder(this@MainActivity, channelId)
 				.setSmallIcon(android.R.drawable.stat_sys_download)
-				.setContentTitle(fileName) // Use fileName instead of fixed title
+				.setContentTitle(fileName)
 				.setPriority(NotificationCompat.PRIORITY_LOW)
 				.setOngoing(true)
 				.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отмена", cancelPendingIntent)
@@ -154,6 +158,7 @@ class MainActivity : AppCompatActivity() {
 				}
 
 				notificationManager.cancel(notificationId)
+				downloadJob = null // Allow new download after the current one finishes
 			}
 		}
 	}
@@ -251,7 +256,9 @@ class MainActivity : AppCompatActivity() {
 				file.delete()
 			}
 		}
+		downloadJob = null
 	}
+
 
 	@SuppressLint("DefaultLocale")
 	private fun formatTime(seconds: Int): String {
@@ -296,7 +303,6 @@ class MainActivity : AppCompatActivity() {
 						urlString.substring(urlString.lastIndexOf('/') + 1)
 					}
 
-				// Теперь мы добавляем проверку на существование файла и создаем уникальное имя
 				val downloadsDirectory =
 					Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
 				getUniqueFileName(originalFileName, downloadsDirectory)
