@@ -98,19 +98,29 @@ class MainActivity : AppCompatActivity() {
 			this, 0, cancelIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
 		)
 
-		val builder = NotificationCompat.Builder(this, channelId)
-			.setSmallIcon(android.R.drawable.stat_sys_download)
-			.setContentTitle("Загрузка в процессе")
-			.setPriority(NotificationCompat.PRIORITY_LOW)
-			.setOngoing(true)
-			.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отмена", cancelPendingIntent)
-
-		val notificationManager = NotificationManagerCompat.from(this)
-		checkNotificationPermission()
-		notificationManager.notify(notificationId, builder.build())
-
 		downloadJob = CoroutineScope(Dispatchers.IO).launch {
 			val startTime = System.currentTimeMillis()
+
+			// Download the file and get its name
+			val fileName = getFileName(url)
+			if (fileName == null) {
+				withContext(Dispatchers.Main) {
+					Toast.makeText(this@MainActivity, "Не удалось получить имя файла", Toast.LENGTH_SHORT)
+						.show()
+				}
+				return@launch
+			}
+
+			val builder = NotificationCompat.Builder(this@MainActivity, channelId)
+				.setSmallIcon(android.R.drawable.stat_sys_download)
+				.setContentTitle(fileName) // Use fileName instead of fixed title
+				.setPriority(NotificationCompat.PRIORITY_LOW)
+				.setOngoing(true)
+				.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отмена", cancelPendingIntent)
+
+			val notificationManager = NotificationManagerCompat.from(this@MainActivity)
+			checkNotificationPermission()
+			notificationManager.notify(notificationId, builder.build())
 
 			val success = downloadFile(url) { progress, fileSize, downloadedBytes ->
 				val elapsedTime = System.currentTimeMillis() - startTime
@@ -147,6 +157,7 @@ class MainActivity : AppCompatActivity() {
 			}
 		}
 	}
+
 
 	private suspend fun downloadFile(
 		urlString: String,
@@ -244,4 +255,27 @@ class MainActivity : AppCompatActivity() {
 		val secs = seconds % 60
 		return String.format("%02d:%02d:%02d", hours, minutes, secs)
 	}
+
+	private fun getFileName(urlString: String): String? {
+		return try {
+			val url = URL(urlString)
+			val connection: HttpURLConnection = url.openConnection() as HttpURLConnection
+			connection.connect()
+
+			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+				null
+			} else {
+				val contentDisposition = connection.getHeaderField("Content-Disposition")
+				if (contentDisposition != null && contentDisposition.contains("filename=")) {
+					contentDisposition.substringAfter("filename=").replace("\"", "")
+				} else {
+					urlString.substring(urlString.lastIndexOf('/') + 1)
+				}
+			}
+		} catch (e: Exception) {
+			e.printStackTrace()
+			null
+		}
+	}
+
 }
