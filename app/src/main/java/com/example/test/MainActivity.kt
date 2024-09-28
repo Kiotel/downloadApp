@@ -18,10 +18,15 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
-import java.io.FileOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -75,7 +80,7 @@ class MainActivity : AppCompatActivity() {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 			val name = "Download Channel"
 			val descriptionText = "Channel for file download notifications"
-			val importance = NotificationManager.IMPORTANCE_LOW
+			val importance = NotificationManager.IMPORTANCE_HIGH
 			val channel = NotificationChannel(channelId, name, importance).apply {
 				description = descriptionText
 			}
@@ -155,8 +160,13 @@ class MainActivity : AppCompatActivity() {
 	): Boolean {
 		return try {
 			val url = URL(urlString)
-			val connection: HttpURLConnection = url.openConnection() as HttpURLConnection
-			connection.connect()
+			val connection: HttpURLConnection =
+				withContext(Dispatchers.IO) {
+					url.openConnection()
+				} as HttpURLConnection
+			withContext(Dispatchers.IO) {
+				connection.connect()
+			}
 
 			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
 				return false // Server returned an error
@@ -174,39 +184,63 @@ class MainActivity : AppCompatActivity() {
 			}
 
 			// Create output file in the Downloads directory
-			outputFilePath = "${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
-			val input = BufferedInputStream(connection.inputStream)
-			val output = FileOutputStream(outputFilePath)
+			outputFilePath =
+				"${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
+			val input = BufferedInputStream(connection.inputStream, 16 * 1024) // 16KB buffer
+			val output = withContext(Dispatchers.IO) {
+				FileOutputStream(outputFilePath)
+			}
 
 			val data = ByteArray(1024)
 			var total: Long = 0
 			var count: Int
 
-			while (input.read(data).also { count = it } != -1) {
+			// Set a variable for the update interval (in milliseconds)
+			val updateInterval = 1000L // Update notification every second
+
+			// Track the last reported progress
+			var lastReportedProgress = 0
+
+			while (withContext(Dispatchers.IO) {
+					input.read(data)
+				}.also { count = it } != -1) {
 				// Check for cancellation
 				if (downloadJob?.isCancelled == true) {
-					output.close()
-					input.close()
+					withContext(Dispatchers.IO) {
+						output.close()
+						input.close()
+					}
 					// Delete the partially downloaded file
-					deleteDownloadedFile(outputFilePath)
+					deleteDownloadedFile(outputFilePath) // Delete the file if the download is cancelled
 					return false // Return false if the download was cancelled
 				}
 
 				total += count
-				output.write(data, 0, count)
+				withContext(Dispatchers.IO) {
+					output.write(data, 0, count)
+				}
 
-				// Update progress
+				// Update progress every second
 				val progress = (total * 100 / fileLength).toInt()
-				onProgressUpdate(progress, fileLength, total)
+
+				// Only update the notification if the progress has changed significantly
+				if (progress - lastReportedProgress >= 1) { // Update if at least 1% change
+					lastReportedProgress = progress
+					onProgressUpdate(progress, fileLength, total)
+				}
 			}
 
-			output.flush()
-			output.close()
-			input.close()
+			withContext(Dispatchers.IO) {
+				output.flush()
+				output.close()
+				input.close()
+			}
 
 			true // Success
 		} catch (e: Exception) {
 			e.printStackTrace()
+			// If an error occurs, delete the file if it exists
+			deleteDownloadedFile(outputFilePath) // Ensure cleanup in case of error
 			false // Error
 		}
 	}
