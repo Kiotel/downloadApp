@@ -11,7 +11,7 @@ import kotlinx.coroutines.launch
 class CancelDownloadReceiver : BroadcastReceiver() {
 	override fun onReceive(context: Context, intent: Intent?) {
 		// Notify that the download has been canceled
-		Toast.makeText(context, "Download canceled", Toast.LENGTH_SHORT).show()
+		Toast.makeText(context, "Загрузка отменена", Toast.LENGTH_SHORT).show()
 
 		// Cancel the ongoing download job
 		GlobalScope.launch {

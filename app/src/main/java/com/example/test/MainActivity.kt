@@ -33,20 +33,20 @@ import java.net.URL
 class MainActivity : AppCompatActivity() {
 
 	companion object {
-		var downloadJob: Job? = null // Job to manage download coroutine
-		const val NOTIFICATION_ID = 1 // Make notificationId static
+		var downloadJob: Job? = null
+		const val NOTIFICATION_ID = 1
 		const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1
 	}
 
 	private val channelId = "custom_download_channel"
 	private val notificationId = 1
-	private var outputFilePath: String? = null // Variable to store the output file path
+	private var outputFilePath: String? = null
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
 		setContentView(R.layout.activity_main)
 
-		checkNotificationPermission() // Check for notification permission
+		checkNotificationPermission()
 		createNotificationChannel()
 
 		val downloadButton: Button = findViewById(R.id.downloadButton)
@@ -80,7 +80,7 @@ class MainActivity : AppCompatActivity() {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 			val name = "Download Channel"
 			val descriptionText = "Channel for file download notifications"
-			val importance = NotificationManager.IMPORTANCE_HIGH
+			val importance = NotificationManager.IMPORTANCE_LOW
 			val channel = NotificationChannel(channelId, name, importance).apply {
 				description = descriptionText
 			}
@@ -91,7 +91,7 @@ class MainActivity : AppCompatActivity() {
 		}
 	}
 
-	@SuppressLint("SetTextI18n", "MissingPermission")
+	@SuppressLint("SetTextI18n")
 	private fun startCustomDownload(url: String) {
 		val cancelIntent = Intent(this, CancelDownloadReceiver::class.java)
 		val cancelPendingIntent: PendingIntent = PendingIntent.getBroadcast(
@@ -100,55 +100,49 @@ class MainActivity : AppCompatActivity() {
 
 		val builder = NotificationCompat.Builder(this, channelId)
 			.setSmallIcon(android.R.drawable.stat_sys_download)
-			.setContentTitle("Download in progress")
+			.setContentTitle("Загрузка в процессе")
 			.setPriority(NotificationCompat.PRIORITY_LOW)
 			.setOngoing(true)
-			.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPendingIntent)
+			.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Отмена", cancelPendingIntent)
 
 		val notificationManager = NotificationManagerCompat.from(this)
+		checkNotificationPermission()
 		notificationManager.notify(notificationId, builder.build())
 
-		// Start the download in a coroutine
 		downloadJob = CoroutineScope(Dispatchers.IO).launch {
 			val startTime = System.currentTimeMillis()
 
 			val success = downloadFile(url) { progress, fileSize, downloadedBytes ->
 				val elapsedTime = System.currentTimeMillis() - startTime
-				val downloadSpeed = downloadedBytes / (elapsedTime / 1000.0) // bytes per second
+				val downloadSpeed = downloadedBytes / (elapsedTime / 1000.0)
 
-				// Calculate remaining time (seconds)
 				val remainingBytes = fileSize - downloadedBytes
 				val remainingTime = if (downloadSpeed > 0) (remainingBytes / downloadSpeed).toInt() else 0
 
-				// Convert remaining time to hh:mm:ss format
 				val eta = formatTime(remainingTime)
 
-				// Convert bytes to KB or MB for readability
 				val downloadedMB = downloadedBytes / (1024 * 1024)
 				val totalMB = fileSize / (1024 * 1024)
 
-				// Update progress in notification with file size and estimated time
 				builder.setProgress(100, progress, false)
-					.setContentText("Downloaded: $downloadedMB MB / $totalMB MB, ETA: $eta")
+					.setContentText("Скачано: $downloadedMB MB / $totalMB MB, Осталось: $eta")
 
 				notificationManager.notify(notificationId, builder.build())
 			}
 
-			// Download complete
 			withContext(Dispatchers.Main) {
 				if (success) {
-					builder.setContentText("Download complete")
+					builder.setContentText("Скачивание завершено")
 						.setProgress(0, 0, false)
 						.setOngoing(false)
 						.setSmallIcon(android.R.drawable.stat_sys_download_done)
 
 					notificationManager.notify(notificationId, builder.build())
-					delay(2000) // Optional delay before hiding notification (2 seconds)
+					delay(2000)
 				} else {
-					Toast.makeText(this@MainActivity, "Download failed", Toast.LENGTH_SHORT).show()
+					Toast.makeText(this@MainActivity, "Загрузка прервана", Toast.LENGTH_SHORT).show()
 				}
 
-				// Cancel the notification after download is complete or failed
 				notificationManager.cancel(notificationId)
 			}
 		}
@@ -169,13 +163,11 @@ class MainActivity : AppCompatActivity() {
 			}
 
 			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-				return false // Server returned an error
+				return false
 			}
 
-			// Get file size from Content-Length header
 			val fileLength = connection.contentLength.toLong()
 
-			// Get filename from Content-Disposition or use the URL
 			val contentDisposition = connection.getHeaderField("Content-Disposition")
 			val fileName = if (contentDisposition != null && contentDisposition.contains("filename=")) {
 				contentDisposition.substringAfter("filename=").replace("\"", "")
@@ -183,7 +175,6 @@ class MainActivity : AppCompatActivity() {
 				urlString.substring(urlString.lastIndexOf('/') + 1)
 			}
 
-			// Create output file in the Downloads directory
 			outputFilePath =
 				"${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
 			val input = BufferedInputStream(connection.inputStream, 16 * 1024) // 16KB buffer
@@ -195,24 +186,19 @@ class MainActivity : AppCompatActivity() {
 			var total: Long = 0
 			var count: Int
 
-			// Set a variable for the update interval (in milliseconds)
-			val updateInterval = 1000L // Update notification every second
-
-			// Track the last reported progress
 			var lastReportedProgress = 0
 
 			while (withContext(Dispatchers.IO) {
 					input.read(data)
 				}.also { count = it } != -1) {
-				// Check for cancellation
 				if (downloadJob?.isCancelled == true) {
 					withContext(Dispatchers.IO) {
 						output.close()
 						input.close()
 					}
-					// Delete the partially downloaded file
-					deleteDownloadedFile(outputFilePath) // Delete the file if the download is cancelled
-					return false // Return false if the download was cancelled
+
+					deleteDownloadedFile(outputFilePath)
+					return false
 				}
 
 				total += count
@@ -220,11 +206,9 @@ class MainActivity : AppCompatActivity() {
 					output.write(data, 0, count)
 				}
 
-				// Update progress every second
 				val progress = (total * 100 / fileLength).toInt()
 
-				// Only update the notification if the progress has changed significantly
-				if (progress - lastReportedProgress >= 1) { // Update if at least 1% change
+				if (progress - lastReportedProgress >= 1) {
 					lastReportedProgress = progress
 					onProgressUpdate(progress, fileLength, total)
 				}
@@ -239,8 +223,7 @@ class MainActivity : AppCompatActivity() {
 			true // Success
 		} catch (e: Exception) {
 			e.printStackTrace()
-			// If an error occurs, delete the file if it exists
-			deleteDownloadedFile(outputFilePath) // Ensure cleanup in case of error
+			deleteDownloadedFile(outputFilePath)
 			false // Error
 		}
 	}
@@ -249,7 +232,7 @@ class MainActivity : AppCompatActivity() {
 		if (!filePath.isNullOrEmpty()) {
 			val file = File(filePath)
 			if (file.exists()) {
-				file.delete() // Delete the file
+				file.delete()
 			}
 		}
 	}
