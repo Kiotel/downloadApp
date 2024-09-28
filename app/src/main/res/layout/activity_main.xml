@@ -6,6 +6,13 @@
     android:orientation="vertical"
     android:gravity="center">
 
+<EditText
+    android:id="@+id/urlEditText"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:hint="Введите URL для загрузки" />
+
+
     <Button
         android:id="@+id/downloadButton"
         android:layout_width="wrap_content"

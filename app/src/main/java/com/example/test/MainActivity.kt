@@ -8,6 +8,8 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.widget.Button
+import android.widget.EditText
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -30,8 +32,16 @@ class MainActivity : AppCompatActivity() {
 		createNotificationChannel()
 
 		val downloadButton: Button = findViewById(R.id.downloadButton)
+		val urlEditText: EditText = findViewById(R.id.urlEditText) // Получаем ссылку из EditText
+
 		downloadButton.setOnClickListener {
-			startCustomDownload()
+			val url = urlEditText.text.toString() // Получаем текст из EditText
+			if (url.isNotEmpty()) {
+				startCustomDownload(url) // Передаем URL в метод загрузки
+			} else {
+				// Обработка случая, когда URL пустой (например, показать сообщение об ошибке)
+				Toast.makeText(this, "Пожалуйста, введите URL", Toast.LENGTH_SHORT).show()
+			}
 		}
 	}
 
@@ -51,10 +61,7 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	@SuppressLint("SetTextI18n", "MissingPermission")
-	private fun startCustomDownload() {
-		val url =
-			"https://s216vlx.storage.yandex.net/rdisk/7f350f2f4d4d17ba272db6a3dd39ce079bdc11c1daaa744e8b7ce8a7375eea81/66f690b2/fKqInKw3d7bLFOeFnMGnhA8Q6PeBKp799W0q9l403OQK9zSryjagcvg0ekuKKajZi350VkuiCcy9j6sQxQ9ZGG9Vz1zOHGONThAu08wy7UCr8npumZHI4midPdWhecNq?uid=0&filename=%D0%BF%D1%80%D0%B5%D0%B4%D0%BC%D0%B5%D1%82%D1%8B%20%E2%80%94%20%D0%BA%D0%BE%D0%BF%D0%B8%D1%8F.zip&disposition=attachment&hash=cGcxDFrzTqWw0riwhSCQH00oeZmUlFsp0W31R0RaMbM3EMM8pe4kQtpcSDp2HBKJEkI0e0it/P53JjBKdrjFug%3D%3D&limit=0&content_type=application%2Fzip&owner_uid=1130000067180474&fsize=554754887&hid=a99b8d2f6f3cb94d294fc2dcae3a753f&media_type=compressed&tknv=v2&ts=62317c9601080&s=d211f24b3a608954aa7212c73d6765ea9cdb1358f9892a6e7a2873771cf69064&pb=U2FsdGVkX18YClUcGn1EIR-QSIsqVuH4cvNK22k-kIiB37s60ccIfG446fALt7zXojyQjdB4n4UbI8b76YS9_YxRmo1Awi1qL6KpMVspWELqLiPWiJE9E2k3ETCeSbzI" // replace with actual file URL
-
+	private fun startCustomDownload(url: String) { // Изменяем метод для принятия URL
 		// Create notification builder for the initial notification
 		val builder = NotificationCompat.Builder(this, channelId)
 			.setSmallIcon(android.R.drawable.stat_sys_download)
@@ -109,7 +116,6 @@ class MainActivity : AppCompatActivity() {
 		}
 	}
 
-
 	private fun downloadFile(
 		urlString: String,
 		onProgressUpdate: (progress: Int, fileSize: Long, downloadedBytes: Long) -> Unit,
@@ -120,13 +126,13 @@ class MainActivity : AppCompatActivity() {
 			connection.connect()
 
 			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-				return false // Server returned HTTP error
+				return false // Сервер вернул ошибку HTTP
 			}
 
-			// Get the file size from the Content-Length header
+			// Получаем размер файла из заголовка Content-Length
 			val fileLength = connection.contentLength.toLong()
 
-			// Get the file name from the Content-Disposition header or fallback to the URL's file name
+			// Получаем имя файла из заголовка Content-Disposition или используем имя файла из URL
 			val contentDisposition = connection.getHeaderField("Content-Disposition")
 			val fileName = if (contentDisposition != null && contentDisposition.contains("filename=")) {
 				contentDisposition.substringAfter("filename=").replace("\"", "")
@@ -134,7 +140,7 @@ class MainActivity : AppCompatActivity() {
 				urlString.substring(urlString.lastIndexOf('/') + 1)
 			}
 
-			// Create output file in the Downloads directory
+			// Создаем выходной файл в директории загрузок
 			val outputFile =
 				"${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
 			val input = BufferedInputStream(connection.inputStream)
@@ -148,7 +154,7 @@ class MainActivity : AppCompatActivity() {
 				total += count
 				output.write(data, 0, count)
 
-				// Update progress and file size in notification
+				// Обновляем прогресс и размер файла в уведомлении
 				val progress = (total * 100 / fileLength).toInt()
 				onProgressUpdate(progress, fileLength, total)
 			}
@@ -157,19 +163,18 @@ class MainActivity : AppCompatActivity() {
 			output.close()
 			input.close()
 
-			true // Success
+			true // Успех
 		} catch (e: Exception) {
 			e.printStackTrace()
-			false // Failure
+			false // Ошибка
 		}
 	}
-}
 
-@SuppressLint("DefaultLocale")
-private fun formatTime(seconds: Int): String {
-	val hours = seconds / 3600
-	val minutes = (seconds % 3600) / 60
-	val secs = seconds % 60
-	return String.format("%02d:%02d:%02d", hours, minutes, secs)
+	@SuppressLint("DefaultLocale")
+	private fun formatTime(seconds: Int): String {
+		val hours = seconds / 3600
+		val minutes = (seconds % 3600) / 60
+		val secs = seconds % 60
+		return String.format("%02d:%02d:%02d", hours, minutes, secs)
+	}
 }
-
