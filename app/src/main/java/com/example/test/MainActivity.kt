@@ -3,7 +3,9 @@ package com.example.test
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -13,13 +15,23 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.BufferedInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
 class MainActivity : AppCompatActivity() {
+
+	companion object {
+		var downloadJob: Job? = null // Job to manage download coroutine
+		const val NOTIFICATION_ID = 1 // Make notificationId static
+	}
 
 	private val channelId = "custom_download_channel"
 	private val notificationId = 1
@@ -28,18 +40,16 @@ class MainActivity : AppCompatActivity() {
 		super.onCreate(savedInstanceState)
 		setContentView(R.layout.activity_main)
 
-		// Create notification channel for Android O and above
 		createNotificationChannel()
 
 		val downloadButton: Button = findViewById(R.id.downloadButton)
-		val urlEditText: EditText = findViewById(R.id.urlEditText) // Получаем ссылку из EditText
+		val urlEditText: EditText = findViewById(R.id.urlEditText)
 
 		downloadButton.setOnClickListener {
-			val url = urlEditText.text.toString() // Получаем текст из EditText
+			val url = urlEditText.text.toString()
 			if (url.isNotEmpty()) {
-				startCustomDownload(url) // Передаем URL в метод загрузки
+				startCustomDownload(url)
 			} else {
-				// Обработка случая, когда URL пустой (например, показать сообщение об ошибке)
 				Toast.makeText(this, "Пожалуйста, введите URL", Toast.LENGTH_SHORT).show()
 			}
 		}
@@ -61,19 +71,24 @@ class MainActivity : AppCompatActivity() {
 	}
 
 	@SuppressLint("SetTextI18n", "MissingPermission")
-	private fun startCustomDownload(url: String) { // Изменяем метод для принятия URL
-		// Create notification builder for the initial notification
+	private fun startCustomDownload(url: String) {
+		val cancelIntent = Intent(this, CancelDownloadReceiver::class.java)
+		val cancelPendingIntent: PendingIntent = PendingIntent.getBroadcast(
+			this, 0, cancelIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+		)
+
 		val builder = NotificationCompat.Builder(this, channelId)
 			.setSmallIcon(android.R.drawable.stat_sys_download)
 			.setContentTitle("Download in progress")
 			.setPriority(NotificationCompat.PRIORITY_LOW)
-			.setOngoing(true) // prevent it from being swiped away
+			.setOngoing(true)
+			.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelPendingIntent)
 
 		val notificationManager = NotificationManagerCompat.from(this)
 		notificationManager.notify(notificationId, builder.build())
 
-		// Use coroutines to handle download on background thread
-		CoroutineScope(Dispatchers.IO).launch {
+		// Start the download in a coroutine
+		downloadJob = CoroutineScope(Dispatchers.IO).launch {
 			val startTime = System.currentTimeMillis()
 
 			val success = downloadFile(url) { progress, fileSize, downloadedBytes ->
@@ -116,23 +131,28 @@ class MainActivity : AppCompatActivity() {
 		}
 	}
 
-	private fun downloadFile(
+	private suspend fun downloadFile(
 		urlString: String,
 		onProgressUpdate: (progress: Int, fileSize: Long, downloadedBytes: Long) -> Unit,
 	): Boolean {
 		return try {
 			val url = URL(urlString)
-			val connection: HttpURLConnection = url.openConnection() as HttpURLConnection
-			connection.connect()
-
-			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
-				return false // Сервер вернул ошибку HTTP
+			val connection: HttpURLConnection =
+				withContext(Dispatchers.IO) {
+					url.openConnection()
+				} as HttpURLConnection
+			withContext(Dispatchers.IO) {
+				connection.connect()
 			}
 
-			// Получаем размер файла из заголовка Content-Length
+			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
+				return false // Server returned an error
+			}
+
+			// Get file size from Content-Length header
 			val fileLength = connection.contentLength.toLong()
 
-			// Получаем имя файла из заголовка Content-Disposition или используем имя файла из URL
+			// Get filename from Content-Disposition or use the URL
 			val contentDisposition = connection.getHeaderField("Content-Disposition")
 			val fileName = if (contentDisposition != null && contentDisposition.contains("filename=")) {
 				contentDisposition.substringAfter("filename=").replace("\"", "")
@@ -140,33 +160,50 @@ class MainActivity : AppCompatActivity() {
 				urlString.substring(urlString.lastIndexOf('/') + 1)
 			}
 
-			// Создаем выходной файл в директории загрузок
+			// Create output file in the Downloads directory
 			val outputFile =
 				"${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
 			val input = BufferedInputStream(connection.inputStream)
-			val output = FileOutputStream(outputFile)
+			val output = withContext(Dispatchers.IO) {
+				FileOutputStream(outputFile)
+			}
 
 			val data = ByteArray(1024)
 			var total: Long = 0
 			var count: Int
 
-			while (input.read(data).also { count = it } != -1) {
-				total += count
-				output.write(data, 0, count)
+			while (withContext(Dispatchers.IO) {
+					input.read(data)
+				}.also { count = it } != -1) {
+				// Check for cancellation
+				if (downloadJob?.isCancelled == true) {
+					withContext(Dispatchers.IO) {
+						output.close()
+						input.close()
+					}
+					return false // Return false if the download was cancelled
+				}
 
-				// Обновляем прогресс и размер файла в уведомлении
+				total += count
+				withContext(Dispatchers.IO) {
+					output.write(data, 0, count)
+				}
+
+				// Update progress
 				val progress = (total * 100 / fileLength).toInt()
 				onProgressUpdate(progress, fileLength, total)
 			}
 
-			output.flush()
-			output.close()
-			input.close()
+			withContext(Dispatchers.IO) {
+				output.flush()
+				output.close()
+				input.close()
+			}
 
-			true // Успех
+			true // Success
 		} catch (e: Exception) {
 			e.printStackTrace()
-			false // Ошибка
+			false // Error
 		}
 	}
 
