@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
@@ -13,16 +14,14 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.*
 import java.io.BufferedInputStream
 import java.io.FileOutputStream
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -31,15 +30,18 @@ class MainActivity : AppCompatActivity() {
 	companion object {
 		var downloadJob: Job? = null // Job to manage download coroutine
 		const val NOTIFICATION_ID = 1 // Make notificationId static
+		const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1
 	}
 
 	private val channelId = "custom_download_channel"
 	private val notificationId = 1
+	private var outputFilePath: String? = null // Variable to store the output file path
 
 	override fun onCreate(savedInstanceState: Bundle?) {
 		super.onCreate(savedInstanceState)
 		setContentView(R.layout.activity_main)
 
+		checkNotificationPermission() // Check for notification permission
 		createNotificationChannel()
 
 		val downloadButton: Button = findViewById(R.id.downloadButton)
@@ -51,6 +53,20 @@ class MainActivity : AppCompatActivity() {
 				startCustomDownload(url)
 			} else {
 				Toast.makeText(this, "Пожалуйста, введите URL", Toast.LENGTH_SHORT).show()
+			}
+		}
+	}
+
+	private fun checkNotificationPermission() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+			if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS)
+				!= PackageManager.PERMISSION_GRANTED
+			) {
+				ActivityCompat.requestPermissions(
+					this,
+					arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+					NOTIFICATION_PERMISSION_REQUEST_CODE
+				)
 			}
 		}
 	}
@@ -123,6 +139,8 @@ class MainActivity : AppCompatActivity() {
 
 					notificationManager.notify(notificationId, builder.build())
 					delay(2000) // Optional delay before hiding notification (2 seconds)
+				} else {
+					Toast.makeText(this@MainActivity, "Download failed", Toast.LENGTH_SHORT).show()
 				}
 
 				// Cancel the notification after download is complete or failed
@@ -137,13 +155,8 @@ class MainActivity : AppCompatActivity() {
 	): Boolean {
 		return try {
 			val url = URL(urlString)
-			val connection: HttpURLConnection =
-				withContext(Dispatchers.IO) {
-					url.openConnection()
-				} as HttpURLConnection
-			withContext(Dispatchers.IO) {
-				connection.connect()
-			}
+			val connection: HttpURLConnection = url.openConnection() as HttpURLConnection
+			connection.connect()
 
 			if (connection.responseCode != HttpURLConnection.HTTP_OK) {
 				return false // Server returned an error
@@ -161,49 +174,49 @@ class MainActivity : AppCompatActivity() {
 			}
 
 			// Create output file in the Downloads directory
-			val outputFile =
-				"${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
+			outputFilePath = "${Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)}/$fileName"
 			val input = BufferedInputStream(connection.inputStream)
-			val output = withContext(Dispatchers.IO) {
-				FileOutputStream(outputFile)
-			}
+			val output = FileOutputStream(outputFilePath)
 
 			val data = ByteArray(1024)
 			var total: Long = 0
 			var count: Int
 
-			while (withContext(Dispatchers.IO) {
-					input.read(data)
-				}.also { count = it } != -1) {
+			while (input.read(data).also { count = it } != -1) {
 				// Check for cancellation
 				if (downloadJob?.isCancelled == true) {
-					withContext(Dispatchers.IO) {
-						output.close()
-						input.close()
-					}
+					output.close()
+					input.close()
+					// Delete the partially downloaded file
+					deleteDownloadedFile(outputFilePath)
 					return false // Return false if the download was cancelled
 				}
 
 				total += count
-				withContext(Dispatchers.IO) {
-					output.write(data, 0, count)
-				}
+				output.write(data, 0, count)
 
 				// Update progress
 				val progress = (total * 100 / fileLength).toInt()
 				onProgressUpdate(progress, fileLength, total)
 			}
 
-			withContext(Dispatchers.IO) {
-				output.flush()
-				output.close()
-				input.close()
-			}
+			output.flush()
+			output.close()
+			input.close()
 
 			true // Success
 		} catch (e: Exception) {
 			e.printStackTrace()
 			false // Error
+		}
+	}
+
+	private fun deleteDownloadedFile(filePath: String?) {
+		if (!filePath.isNullOrEmpty()) {
+			val file = File(filePath)
+			if (file.exists()) {
+				file.delete() // Delete the file
+			}
 		}
 	}
 
